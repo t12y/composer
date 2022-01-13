@@ -4,12 +4,9 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
-
-	"github.com/google/shlex"
 )
 
 type Service struct {
@@ -17,7 +14,7 @@ type Service struct {
 	name        string
 	readyOn     string
 	workdir     string
-	command     []string
+	command     string
 	dependsOn   []string
 	environment map[string]string
 	killTimeout time.Duration
@@ -31,15 +28,10 @@ type Service struct {
 }
 
 func NewService(id int, name string, globalEnv Environment, cfg ServiceConfig) (*Service, error) {
-	command, err := shlex.Split(cfg.Command)
-	if err != nil {
-		return nil, fmt.Errorf("cannot parse command: %w", err)
-	}
-
 	service := &Service{
 		id:          id,
 		name:        name,
-		command:     command,
+		command:     cfg.Command,
 		workdir:     cfg.Workdir,
 		readyOn:     cfg.ReadyOn,
 		dependsOn:   cfg.DependsOn,
@@ -65,26 +57,7 @@ func (s *Service) initCmd() error {
 		return fmt.Errorf("command required")
 	}
 
-	// expand environment variables in all components of the command
-	for i := range s.command {
-		s.command[i] = os.Expand(s.command[i], func(key string) string {
-			return os.ExpandEnv(s.environment[key])
-		})
-	}
-
-	// support ~ substitute for HOME directory
-	programName := s.command[0]
-	if strings.HasPrefix(programName, "~") {
-		programName = s.environment["HOME"] + programName[1:]
-	}
-
-	// determine absolute path to the command
-	program, err := exec.LookPath(programName)
-	if err != nil {
-		return fmt.Errorf("program not found %s", programName)
-	}
-
-	s.cmd = exec.Command(program, s.command[1:]...)
+	s.cmd = exec.Command("/bin/sh", "-c", s.command)
 
 	// set pgid, so we can terminate all subprocesses as well
 	s.cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
