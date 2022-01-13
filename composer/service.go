@@ -60,6 +60,23 @@ func NewService(id int, name string, globalEnv Environment, cfg ServiceConfig) (
 	return service, nil
 }
 
+// cleanCommand returns a command without empty components
+func cleanCommand(cmd []string) []string {
+	cleanCmd := make([]string, 0, len(cmd))
+
+	for i := range cmd {
+		part := strings.TrimSpace(cmd[i])
+
+		if part == "" {
+			continue
+		}
+
+		cleanCmd = append(cleanCmd, part)
+	}
+
+	return cleanCmd
+}
+
 func (s *Service) initCmd() error {
 	if len(s.command) == 0 {
 		return fmt.Errorf("command required")
@@ -71,6 +88,8 @@ func (s *Service) initCmd() error {
 			return os.ExpandEnv(s.environment[key])
 		})
 	}
+
+	s.command = cleanCommand(s.command)
 
 	// support ~ substitute for HOME directory
 	programName := s.command[0]
