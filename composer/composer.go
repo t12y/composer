@@ -194,7 +194,7 @@ func (c *Composer) registerOutput(service *Service, readerFn func() (io.ReadClos
 
 func (c *Composer) startServices() error {
 	signalCh := make(chan os.Signal, 1)
-	signal.Notify(signalCh, os.Interrupt)
+	signal.Notify(signalCh, os.Interrupt, syscall.SIGHUP)
 
 	for i := range c.services {
 		service := c.services[i]
