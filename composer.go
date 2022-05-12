@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"os"
 
@@ -21,8 +22,15 @@ func main() {
 		os.Exit(errCode)
 	}
 
+	var waitForAll bool
+	flag.BoolVar(&waitForAll, "wait", false, "wait for all services to finish")
+	flag.Parse()
+
 	if len(os.Args) <= 1 {
-		fmt.Printf("\nUsage: %s SERVICE [SERVICE ...]\n\nAvailable services:\n", os.Args[0])
+		fmt.Printf("\nUsage: %s [options] SERVICE [SERVICE ...]\n\nOptions:\n", os.Args[0])
+		flag.PrintDefaults()
+
+		fmt.Println("\nServices:")
 		for service := range cfg.Services {
 			fmt.Println(" -", service)
 		}
@@ -30,7 +38,7 @@ func main() {
 		os.Exit(errCode)
 	}
 
-	services := os.Args[1:]
+	services := flag.Args()
 
 	var c *composer.Composer
 	if c, err = composer.New(*cfg, services...); err != nil {
@@ -38,7 +46,13 @@ func main() {
 		os.Exit(errCode)
 	}
 
-	if err = c.Run(); err != nil {
+	if waitForAll {
+		err = c.RunAll(services...)
+	} else {
+		err = c.Run()
+	}
+
+	if err != nil {
 		fmt.Println("Error running composer:", err)
 		os.Exit(errCode)
 	}
