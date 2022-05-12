@@ -14,6 +14,8 @@ import (
 
 type Composer struct {
 	cfg          Config
+	waitFor      map[string]bool
+	waitLock     sync.Mutex
 	services     []*Service
 	running      map[string]bool
 	cleanupWait  sync.WaitGroup
@@ -74,6 +76,17 @@ func (c *Composer) Run() error {
 	}
 
 	return nil
+}
+
+// RunAll runs all provided services and only exists when one of services exit with an error or all successful.
+func (c *Composer) RunAll(services ...string) error {
+	c.waitFor = make(map[string]bool)
+
+	for _, service := range services {
+		c.waitFor[service] = true
+	}
+
+	return c.Run()
 }
 
 // Interrupt interrupts composer execution
@@ -208,7 +221,7 @@ func (c *Composer) startServices() error {
 			c.debug("waiting for: %s", service.name)
 			err := service.cmd.Wait()
 			c.debug("wait-err from %s: %v", service.name, err)
-			c.quit(err)
+			c.quit(service.name, err)
 		}()
 
 		c.info("Waiting for service %s to be ready", service.name)
@@ -251,8 +264,22 @@ func (c *Composer) debug(msg string, args ...interface{}) {
 	fmt.Println("[composer-debug]", fmt.Sprintf(msg, args...))
 }
 
-func (c *Composer) quit(err error) {
-	c.debug("quit with error: %v", err)
+func (c *Composer) quit(serviceName string, err error) {
+	c.waitLock.Lock()
+	defer c.waitLock.Unlock()
+
+	c.debug("waitFor length: %d", len(c.waitFor))
+	if len(c.waitFor) > 0 && err == nil && c.waitFor[serviceName] {
+		c.debug("service %s exited cleanly", serviceName)
+		delete(c.waitFor, serviceName)
+
+		if len(c.waitFor) > 0 {
+			c.debug("%d more services to wait for (%v)", len(c.waitFor), c.waitFor)
+			return
+		}
+	}
+
+	c.debug("service %s quit with error: %v", serviceName, err)
 	c.lastError <- err
 }
 
