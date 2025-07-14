@@ -19,6 +19,7 @@ type Composer struct {
 	services     []*Service
 	running      map[string]bool
 	cleanupWait  sync.WaitGroup
+	outputWait   sync.WaitGroup
 	lastError    chan error
 	debugEnabled bool
 }
@@ -173,13 +174,18 @@ func (c *Composer) registerOutput(service *Service, readerFn func() (io.ReadClos
 		return fmt.Errorf("cannot get reader: %w", err)
 	}
 
-	scanner := bufio.NewScanner(reader)
+	c.outputWait.Add(1)
+
+	bufReader := bufio.NewReader(reader)
 
 	go func() {
+		defer c.outputWait.Done()
+
 		lastLine := ""
 
-		for scanner.Scan() {
-			line := scanner.Text()
+		for line := ""; err == nil; {
+			line, err = bufReader.ReadString('\n')
+			line = strings.TrimRight(line, "\r\n")
 
 			// skip repeated lines
 			if strings.EqualFold(line, lastLine) {
@@ -197,8 +203,8 @@ func (c *Composer) registerOutput(service *Service, readerFn func() (io.ReadClos
 			}
 		}
 
-		if err = scanner.Err(); err != nil {
-			_, _ = fmt.Fprintln(os.Stderr, service.name, fmt.Sprintf("scanner error: %v", err))
+		if err != io.EOF {
+			_, _ = fmt.Fprintln(os.Stderr, service.name, fmt.Sprintf("reader error: %v", err))
 		}
 	}()
 
@@ -219,6 +225,9 @@ func (c *Composer) startServices() error {
 
 		go func() {
 			c.debug("waiting for: %s", service.name)
+			// we must first wait for command stdout / stderr because cmd.Wait() will close pipes after seeing the command exit
+			// see: https://pkg.go.dev/os/exec#Cmd.StdoutPipe
+			c.outputWait.Wait()
 			err := service.cmd.Wait()
 			c.debug("wait-err from %s: %v", service.name, err)
 			c.quit(service.name, err)
