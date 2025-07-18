@@ -10,14 +10,15 @@ import (
 )
 
 type Service struct {
-	id          int
-	name        string
-	readyOn     string
-	workdir     string
-	command     string
-	dependsOn   []string
-	environment map[string]string
-	killTimeout time.Duration
+	id           int
+	isDependency bool
+	name         string
+	readyOn      string
+	workdir      string
+	command      string
+	dependsOn    []string
+	environment  map[string]string
+	killTimeout  time.Duration
 
 	logPrefix string
 

@@ -31,6 +31,11 @@ func New(cfg Config, initServices ...string) (*Composer, error) {
 		return nil, fmt.Errorf("config error: %w", err)
 	}
 
+	topLevelServices := make(map[string]bool, len(initServices))
+	for i := range initServices {
+		topLevelServices[initServices[i]] = true
+	}
+
 	services := make([]*Service, len(servicesToStart))
 
 	env := cfg.Environment
@@ -39,6 +44,7 @@ func New(cfg Config, initServices ...string) (*Composer, error) {
 		if services[i], err = NewService(i, name, env, cfg.Services[name]); err != nil {
 			return nil, fmt.Errorf("error setting up service %s: %w", name, err)
 		}
+		services[i].isDependency = !topLevelServices[name]
 	}
 
 	composer := &Composer{
@@ -174,12 +180,16 @@ func (c *Composer) registerOutput(service *Service, readerFn func() (io.ReadClos
 		return fmt.Errorf("cannot get reader: %w", err)
 	}
 
-	c.outputWait.Add(1)
+	if !service.isDependency {
+		c.outputWait.Add(1)
+	}
 
 	bufReader := bufio.NewReader(reader)
 
 	go func() {
-		defer c.outputWait.Done()
+		if !service.isDependency {
+			defer c.outputWait.Done()
+		}
 
 		lastLine := ""
 
