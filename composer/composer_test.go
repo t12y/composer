@@ -2,10 +2,13 @@ package composer_test
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -63,6 +66,69 @@ func TestKill(t *testing.T) {
 	const killAfter = 3 * time.Second
 	if time.Since(start) > killAfter {
 		t.Errorf("process should be killed after %v seconds, it took %v instead", killAfter, time.Since(start))
+	}
+}
+
+func TestKillProcessTree(t *testing.T) {
+	tmpDir := t.TempDir()
+	pidFile := filepath.Join(tmpDir, "child.pid")
+
+	// this script does three things:
+	// 1. traps SIGINT so the parent ignores the polite shutdown (forcing the KillTimeout)
+	// 2. spawns a background subshell with a sleep command, recording its PID
+	// 3. waits indefinitely
+	cmdStr := fmt.Sprintf("trap '' INT; sleep 10 & echo $! > %s; wait", pidFile)
+
+	cfg := composer.Config{
+		Version: composer.Version,
+		Services: map[string]composer.ServiceConfig{
+			"tree_test": {
+				Command:     cmdStr,
+				KillTimeout: 1,
+			},
+		},
+	}
+
+	c, err := composer.New(cfg, "tree_test")
+	if err != nil {
+		t.Fatalf("error initializing composer: %v", err)
+	}
+
+	//c.EnableDebug()
+
+	time.AfterFunc(time.Second, c.Interrupt)
+
+	start := time.Now()
+
+	if err = c.Run(); err != nil {
+		if !strings.Contains(err.Error(), "interrupted by user") {
+			t.Errorf("error running composer: %v", err)
+		}
+	}
+
+	const killAfter = 3 * time.Second
+	if time.Since(start) > killAfter {
+		t.Errorf("process should be killed after %v, it took %v instead", killAfter, time.Since(start))
+	}
+
+	// ensure the child PID was killed
+	pidBytes, err := os.ReadFile(pidFile)
+	if err != nil {
+		t.Fatalf("failed to read child PID file (was the child ever spawned?): %v", err)
+	}
+
+	childPid, err := strconv.Atoi(strings.TrimSpace(string(pidBytes)))
+	if err != nil {
+		t.Fatalf("invalid PID in file: %s", string(pidBytes))
+	}
+
+	// check if the child process is still running
+	if err = syscall.Kill(childPid, 0); err == nil {
+		// the signal was delivered successfully, meaning the process is still alive
+		// clean it up forcefully so it doesn't leak memory in the test runner
+		_ = syscall.Kill(childPid, syscall.SIGKILL)
+
+		t.Errorf("child process %d was left orphaned and running", childPid)
 	}
 }
 

@@ -2,6 +2,7 @@ package composer
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -60,6 +61,10 @@ func New(cfg Config, initServices ...string) (*Composer, error) {
 // Run starts all services
 func (c *Composer) Run() error {
 	c.info("Preparing composer")
+
+	if err := BecomeSubreaper(); err != nil {
+		return err
+	}
 
 	const maxOpenFiles = 65000
 	opeFilesRLimit := &syscall.Rlimit{
@@ -336,20 +341,21 @@ func (c *Composer) cleanupService(service *Service) {
 
 	pid := service.cmd.Process.Pid
 
+	// snapshot descendants once, before anything dies
+	descendants := c.collectDescendants(pid)
+
 	killTimer := time.AfterFunc(service.killTimeout, func() {
 		c.debug("cleanup %s - killing %d", service.name, pid)
-		if err := syscall.Kill(-pid, syscall.SIGKILL); err != nil {
-			_, _ = fmt.Fprintf(os.Stderr, "error killing service %s with PID %d\n", service.name, pid)
-		}
+		c.signalAll(descendants, pid, syscall.SIGKILL)
 	})
 	defer killTimer.Stop()
 
 	c.debug("cleanup %s - interrupting %d", service.name, pid)
-	if err := syscall.Kill(-pid, syscall.SIGINT); err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "error interrupting service %s with PID %d\n", service.name, pid)
+	c.signalAll(descendants, pid, syscall.SIGINT)
+
+	if _, err := service.cmd.Process.Wait(); err != nil && !errors.Is(err, syscall.ECHILD) {
+		_, _ = fmt.Fprintf(os.Stderr, "error waiting for service %s with PID %d to die: %+v\n", service.name, pid, err)
 	}
 
-	if _, err := service.cmd.Process.Wait(); err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "error waiting for service %s with PID %d to die\n", service.name, pid)
-	}
+	c.reapDescendants(descendants)
 }
